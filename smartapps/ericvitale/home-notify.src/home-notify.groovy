@@ -1,6 +1,9 @@
 /**
  *  Home Notify
  *
+ *  Version 1.0.1 - 07/22/16
+ *   -- Feature: Now control sirens separate from alarms and how long the siren is on for.
+ *   -- Feature: Delay the voice notification so it is after the alarm track, not during.
  *  Version 1.0.0 - 07/21/16
  *   -- Initial Build
  *
@@ -57,11 +60,18 @@ def mainPage() {
         
         section("Speech Synthesizers") {
         	input "speech", "capability.speechSynthesis", title: "Which?", required: false, multiple: true
+            input "delaySpeech", "bool", title: "Delay speech?", required: false, defaultValue: false
+            input "speechDelayLength", "number", title: "Seconds to delay speech?", required: true, defaultValue: 0
         }
         
         section("Alarms") {
         	input "alarms", "capability.alarm", title: "Which?", required: false, multiple: true
             input "alarmTrack", "text", title: "Track to Play?", required: true, defaultValue: "1"
+        }
+        
+        section("Sirens") {
+        	input "sirens", "capability.alarm", title: "Which?", required: false, multiple: true
+            input "sirenLength", "number", title: "Play siren for N seconds.", required: true, defaultValue: 5
         }
         
         section("Electronic Notifications") {
@@ -205,9 +215,18 @@ def initalization() {
     	log("Selected speech synthesizers type = ${it.name} and label = ${it.label}.", "INFO")
     }
     
+    log("Delay speech setting = ${delaySpeech}.", "INFO")
+    log("Speech delay set to ${speechDelayLength}.", "INFO")
+    
     alarms.each { it->
     	log("Selected alarms type = ${it.name} and label = ${it.label}.", "INFO")
     }
+    
+    sirens.each { it->
+    	log("Selected sirens type = ${it.name} and label = ${it.label}.", "INFO")
+    }
+    
+    log("The sirens will play for ${sirenLength} seconds.", "INFO")
     
     log("End initialization().", "DEBUG")
 }
@@ -241,6 +260,7 @@ def contactHandler(evt) {
 	    playMusicTrack(musicTrack)
     	playAlarmTrack(alarmTrack)
         speak(evt.descriptionText)
+        activateSirens()
         if(push) {
         	sendPushNotification(evt.descriptionText)
         }
@@ -266,6 +286,7 @@ def motionHandler(evt) {
 	    playMusicTrack(musicTrack)
     	playAlarmTrack(alarmTrack)
         speak(evt.descriptionText)
+        activateSirens()
     } else {
     	log("Frequent Event: Ignoring", "DEBUG")
     }
@@ -286,16 +307,24 @@ def playAlarmTrack(track) {
 
 def speak(phrase) {
 	log("Begin speak()", "DEBUG")
-    	speech?.speak(phrase)
+    	if(delaySpeech) {
+        	state.phrase = phrase
+        	runIn(speechDelayLength, delayedSpeech)
+        } else {
+        	speech?.speak(phrase)
+        }
     log("End speak()", "DEBUG")
+}
+
+def activateSirens() {
+	log("Begin activateSirens()", "DEBUG")
+    sirens?.siren()
+    runIn(sirenLength, turnOffSiren)
+    log("End activateSirens()", "DEBUG")
 }
 
 private isDuplicateCommand(lastExecuted, allowedMil) {
     !lastExecuted ? false : (lastExecuted + allowedMil > new Date().time) 
-}
-
-def sendSMSNotification(text) {
-	sendNotificationToContacts(text, smsRecipients)
 }
 
 def sendPushNotification(text) {
@@ -308,4 +337,20 @@ def setInTheMode(val) {
 
 def inTheMode() {
 	return state.inTheMode
+}
+
+def turnOffSiren() {
+	log("Turning off sirens.", "DEBUG")
+	sirens?.off()
+    log("Sirens off.", "DEBUG")
+    runIn(2, makeSureSirenIsOff)
+}
+
+def makeSureSirenIsOff() {
+	log("Double checking sirens.", "DEBUG")
+	sirens?.off()
+}
+
+def delayedSpeech() {
+	speech?.speak(state.phrase)
 }
