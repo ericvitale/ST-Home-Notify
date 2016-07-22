@@ -4,6 +4,8 @@
  *  Version 1.0.1 - 07/22/16
  *   -- Feature: Now control sirens separate from alarms and how long the siren is on for.
  *   -- Feature: Delay the voice notification so it is after the alarm track, not during.
+ *   -- Feature: Arrival Windows - Configure app to not notify during an arrival window.
+ *   -- Feature: Moisture Sensors!
  *  Version 1.0.0 - 07/21/16
  *   -- Initial Build
  *
@@ -39,8 +41,15 @@ preferences {
 def mainPage() {
 	dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
         
-        section("Mode") {
-        	input "modes", "mode", title: "Select a Mode", multiple: true, required: false
+        section("Modes") {
+        	input "modes", "mode", title: "Modes?", multiple: true, required: false, description: "Select the  modes that you want this app to monitor and execute rules within."
+        }
+        
+        section("Arrival Window") {
+        	input "useArrivalWindow", "bool", title: "Use Arrival Window?", required: true, defaultValue: false, description: "Should this app ignore an arrival?"
+	        input "arrivalModes", "mode", title: "Modes?", multiple: true, required: false, description: "Select the  modes that you want this app to ignore ."
+            input "presence", "capability.presenceSensor", title: "presence", required: false, multiple: true
+            input "arrivalWindow", "number", title: "Arrival Window (mins)", required: false, defaultValue: 5, range: "0..*", description: "Number of minutes to ignore an arrival."
         }
         
         section("Contact Sensor Subscriptions") {
@@ -51,6 +60,11 @@ def mainPage() {
         section("Motion Sensor Subscriptions") {
             input "motions", "capability.motionSensor", title: "Which?", required: false, multiple: true
             input "motionsEvents", "enum", title: "Motion Sensor Trigger", required: false, multiple: true, options: ["Active", "Inactive"]
+        }
+        
+        section("Water Sensors") {
+        	input "waterSensors", "capability.waterSensor", title: "Which?", required: false, multiple: true
+            input "waterSensorEvents", "enum", title: "Moisture Sensor Events", required: false, multiple: true, options: ["Wet", "Dry"]
         }
         
         section("Music Players") {
@@ -207,6 +221,23 @@ def initalization() {
         subscribe(motions, "motion.inactive", motionHandler)
     }
     
+    waterSensors.each { it->
+    	log("Selected moisture sensors type = ${it.name} and label = ${it.label}.", "INFO")
+    }
+    
+    log("Selected moisture sensor events ${waterSensorEvents}.", "INFO")
+    
+    if("Wet" in waterSensorEvents && "Dry" in waterSensorEvents) {
+    	log("Subscribing to all moisture sensor events.", "INFO")
+        subscribe(waterSensors, "water", waterSensorHandler)
+    } else if ("Wet" in waterSensorEvents) {
+    	log("Subscribing to [wet] moisture sensor events.", "INFO")
+        subscribe(waterSensors, "water.wet", waterSensorHandler)
+    } else if ("Dry" in waterSensorEvents) {
+    	log("Subscribing to [dry] moisture sensor events.", "INFO")
+        subscribe(waterSensors, "water.dry", waterSensorHandler)
+    }
+    
     players.each { it->
     	log("Selected music players type = ${it.name} and label = ${it.label}.", "INFO")
     }
@@ -227,8 +258,57 @@ def initalization() {
     }
     
     log("The sirens will play for ${sirenLength} seconds.", "INFO")
+            
+	if(useArrivalWindow) {
+		def arrivalText = ""
+        
+        presence.each { it->
+        	if(arrivalText != "") {
+           		arrivalText += ", "
+            }
+            arrivalText += it.label
+        }
+    	log("Using arrival window of ${arrivalWindow} minutes for ${arrivalText}.", "INFO")
+        subscribe(presence, "presence", presenceHandler)
+        
+    } else {
+    	log("Not using arrival window.", "INFO")
+    }
     
     log("End initialization().", "DEBUG")
+}
+
+def waterSensorHandler(evt) {
+	
+    if(location.mode in modes) {
+    	log("Active mode found.", "DEBUG")
+    } else {
+    	log("Not in correct mode, ignoring event.", "DEBUG")
+        return
+    }
+    
+    log("Event = ${evt.descriptionText}.", "DEBUG")
+    
+    if (!isDuplicateCommand(state.lastEvent, ignoreFrequentEventsDuration)) {
+        state.lastEvent = new Date().time    
+	    playMusicTrack(musicTrack)
+    	playAlarmTrack(alarmTrack)
+        speak(evt.descriptionText)
+        activateSirens()
+        if(push) {
+        	sendPushNotification(evt.descriptionText)
+        }
+    } else {
+    	log("Frequent Event: Ignoring", "DEBUG")
+    }
+}
+
+def presenceHandler(evt) {
+	if(evt.value == "present" && location.mode in arrivalModes) {
+    	state.ignoreArrival = true
+        log("Arrival detected for ${evt.device}, starting arrival window.", "INFO")
+        runIn(arrivalWindow, endArrivalWindow)
+    }
 }
 
 def modeChangeHandler(evt) {
@@ -250,6 +330,11 @@ def contactHandler(evt) {
     	log("Active mode found.", "DEBUG")
     } else {
     	log("Not in correct mode, ignoring event.", "DEBUG")
+        return
+    }
+    
+    if(state.ignoreArrival && useArrivalWindow) {
+    	log("Within arrival window.", "INFO")
         return
     }
     
@@ -277,6 +362,11 @@ def motionHandler(evt) {
     	log("Active mode found.", "DEBUG")
     } else {
     	log("Not in correct mode, ignoring event.", "DEBUG")
+        return
+    }
+    
+    if(state.ignoreArrival && useArrivalWindow) {
+    	log("Within arrival window.", "INFO")
         return
     }
     
@@ -353,4 +443,8 @@ def makeSureSirenIsOff() {
 
 def delayedSpeech() {
 	speech?.speak(state.phrase)
+}
+
+def endArrivalWindow() {
+	state.ignoreArrival = false
 }
