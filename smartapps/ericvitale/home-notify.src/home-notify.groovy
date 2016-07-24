@@ -307,7 +307,7 @@ def presenceHandler(evt) {
 	if(evt.value == "present" && location.mode in arrivalModes) {
     	state.ignoreArrival = true
         log("Arrival detected for ${evt.device}, starting arrival window.", "INFO")
-        runIn(arrivalWindow, endArrivalWindow)
+        runIn(arrivalWindow * 60, endArrivalWindow)
     }
 }
 
